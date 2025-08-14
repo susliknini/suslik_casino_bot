@@ -391,6 +391,9 @@ async def process_bet_amount(message: types.Message, state: FSMContext):
             await state.finish()
             return
         
+        # Сохраняем сумму ставки в состоянии
+        await state.update_data(bet_amount=amount)
+        
         data = await state.get_data()
         game_type = data['game_type']
         
@@ -722,5 +725,6 @@ async def admin_mail_input(message: types.Message, state: FSMContext):
 if __name__ == '__main__':
     init_db()
     executor.start_polling(dp, skip_updates=True)
+
 
 
