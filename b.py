@@ -11,7 +11,7 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 TOKEN = "2200914529:AAGLJuHZwBDtu032T2J7MfjoO0VcAORZ6as/test"
-ADMIN_USERNAME = "@suslikbank" 
+ADMIN_USERNAME = "@molni" 
 CHANNEL_USERNAME = "@suslikcasino"
 INITIAL_BALANCE = 5000
 DB_NAME = 'suslik_casino.db'
@@ -725,6 +725,7 @@ async def admin_mail_input(message: types.Message, state: FSMContext):
 if __name__ == '__main__':
     init_db()
     executor.start_polling(dp, skip_updates=True)
+
 
 
 
