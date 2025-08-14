@@ -46,13 +46,13 @@ class AdminStates(StatesGroup):
     waiting_amount = State()
     waiting_message = State()
 
-def blue_button(text):
-    return f"» {text}"
-    <b><span style="color: {BLUE_THEME['dark']};">▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</span></b>
-    <b>{title}</b>
-    {content}
-    <b><span style="color: {BLUE_THEME['dark']};">▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</span></b>
-    """
+def blue_card(title, content):
+    return f"""
+<b>▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</b>
+<b>{title}</b>
+{content}
+<b>▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</b>
+"""
 
 def blue_button(text):
     return f"<span style='color: {BLUE_THEME['primary']};'><b>»</b></span> {text}"
@@ -847,4 +847,5 @@ if __name__ == '__main__':
     init_db()
 
     executor.start_polling(dp, skip_updates=True)
+
 
