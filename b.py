@@ -16,47 +16,23 @@ CHANNEL_USERNAME = "@suslikcasino"
 INITIAL_BALANCE = 5000
 DB_NAME = 'suslik_casino.db'
 
-bot = Bot(token=TOKEN, parse_mode=types.ParseMode.HTML)
+bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-BLUE_THEME = {
-    'primary': '#3498db',
-    'secondary': '#2980b9',
-    'light': '#ecf0f1',
-    'dark': '#2c3e50',
-    'success': '#2ecc71',
-    'danger': '#e74c3c',
-    'text': '#ffffff'
-}
-
+# Состояния FSM
 class GameStates(StatesGroup):
     waiting_bet_amount = State()
     waiting_cube_bet = State()
-    waiting_slot_bet = State()
     waiting_roulette_bet = State()
     waiting_roulette_color = State()
     waiting_roulette_number = State()
-    waiting_dice_bet = State()
-    waiting_football_bet = State()
-    waiting_basketball_bet = State()
 
 class AdminStates(StatesGroup):
     waiting_user = State()
     waiting_amount = State()
-    waiting_message = State()
 
-def blue_card(title, content):
-    return f"""
-<b>▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</b>
-<b>{title}</b>
-{content}
-<b>▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬</b>
-"""
-
-def blue_button(text):
-    return f"<span style='color: {BLUE_THEME['primary']};'><b>»</b></span> {text}"
-
+# База данных
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -66,16 +42,15 @@ def init_db():
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         first_name TEXT,
-        balance INTEGER DEFAULT 10000,
+        balance INTEGER DEFAULT ?,
         last_daily TEXT,
         last_work TEXT,
         reg_date TEXT DEFAULT CURRENT_TIMESTAMP,
         vip_status INTEGER DEFAULT 0,
         total_wins INTEGER DEFAULT 0,
         total_losses INTEGER DEFAULT 0,
-        ref_count INTEGER DEFAULT 0,
-        banned INTEGER DEFAULT 0
-    )''')
+        ref_count INTEGER DEFAULT 0
+    )''', (INITIAL_BALANCE,))
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS bets (
@@ -85,50 +60,21 @@ def init_db():
         amount INTEGER,
         result TEXT,
         win_amount INTEGER,
-        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(user_id)
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
     
-    # Создаем таблицу рефералов
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         ref_id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_id INTEGER,
         referred_id INTEGER,
-        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(referrer_id) REFERENCES users(user_id),
-        FOREIGN KEY(referred_id) REFERENCES users(user_id)
-    )''')
-    
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admin_logs (
-        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        admin_id INTEGER,
-        user_id INTEGER,
-        action TEXT,
-        details TEXT,
         timestamp TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
-    
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS items (
-        item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        price INTEGER,
-        effect TEXT
-    )''')
-    
-    cursor.executemany('''
-    INSERT OR IGNORE INTO items (name, price, effect) VALUES (?, ?, ?)
-    ''', [
-        ('VIP статус', 50000, 'vip'),
-        ('Удвоитель выигрыша', 20000, 'double_win'),
-        ('Бесплатная ставка', 15000, 'free_bet')
-    ])
     
     conn.commit()
     conn.close()
 
+# Функции работы с БД
 def get_user(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -160,6 +106,14 @@ def update_balance(user_id, amount):
     conn.commit()
     conn.close()
 
+def get_balance(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
+    balance = cursor.fetchone()[0]
+    conn.close()
+    return balance
+
 def save_bet(user_id, game_type, amount, result, win_amount):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -178,6 +132,7 @@ def add_referral(referrer_id, referred_id):
     conn.commit()
     conn.close()
 
+# Игровая логика
 def play_cube(bet_type):
     result = random.randint(1, 6)
     is_even = result % 2 == 0
@@ -185,7 +140,7 @@ def play_cube(bet_type):
     return {'result': result, 'win': win}
 
 def play_slots():
-    symbols = ['🍒', '🍋', '🍊', '🍇', '🍉', '7️⃣', '💰', '🎁']
+    symbols = ['🍒', '🍋', '🍊', '🍇', '🍉', '7️⃣']
     reels = [random.choice(symbols) for _ in range(3)]
     
     if reels[0] == reels[1] == reels[2] == '7️⃣':
@@ -221,49 +176,43 @@ def play_football():
 def play_basketball():
     return {'win': random.random() < 0.5}
 
-def calculate_possible_win(game_type, amount):
-    multipliers = {
-        'cube': 2,
-        'slots': 10,
-        'roulette': 36,
-        'dice': 4,
-        'football': 1.8,
-        'basketball': 2
-    }
-    return int(amount * multipliers[game_type])
-
-def main_keyboard(admin=False):
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+# Клавиатуры
+def main_menu_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
     buttons = [
-        KeyboardButton(blue_button("🎰 Игры")),
-        KeyboardButton(blue_button("💰 Баланс")),
-        KeyboardButton(blue_button("🏆 Топ")),
-        KeyboardButton(blue_button("🎁 Бонус")),
-        KeyboardButton(blue_button("💼 Работать")),
-        KeyboardButton(blue_button("👥 Рефералы")),
-        KeyboardButton(blue_button("🛍️ Магазин")),
-        KeyboardButton(blue_button("📊 Статистика"))
+        InlineKeyboardButton('🎰 Игры', callback_data='games'),
+        InlineKeyboardButton('💰 Баланс', callback_data='balance'),
+        InlineKeyboardButton('🎁 Бонус', callback_data='bonus'),
+        InlineKeyboardButton('💼 Работать', callback_data='work'),
+        InlineKeyboardButton('👥 Рефералы', callback_data='referrals'),
+        InlineKeyboardButton('🏆 Топ игроков', callback_data='top'),
+        InlineKeyboardButton('📊 Статистика', callback_data='stats')
     ]
     keyboard.add(*buttons)
     
-    if admin:
-        keyboard.add(KeyboardButton(blue_button("👑 Админ")))
+    if ADMIN_USERNAME:
+        keyboard.add(InlineKeyboardButton('👑 Админ', callback_data='admin'))
     
     return keyboard
 
 def games_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     buttons = [
-        InlineKeyboardButton('🎲 Кубик (x2)', callback_data='game_cube'),
-        InlineKeyboardButton('🎰 Слоты (x2-x10)', callback_data='game_slots'),
-        InlineKeyboardButton('🎡 Рулетка (x2-x36)', callback_data='game_roulette'),
-        InlineKeyboardButton('🎯 Дартс (x4)', callback_data='game_dice'),
-        InlineKeyboardButton('⚽ Футбол (x1.8)', callback_data='game_football'),
-        InlineKeyboardButton('🏀 Баскетбол (x2)', callback_data='game_basketball')
+        InlineKeyboardButton('🎲 Кубик', callback_data='game_cube'),
+        InlineKeyboardButton('🎡 Рулетка', callback_data='game_roulette'),
+        InlineKeyboardButton('🎰 Слоты', callback_data='game_slots'),
+        InlineKeyboardButton('🎯 Дартс', callback_data='game_dice'),
+        InlineKeyboardButton('⚽ Футбол', callback_data='game_football'),
+        InlineKeyboardButton('🏀 Баскетбол', callback_data='game_basketball')
     ]
     keyboard.add(*buttons)
+    keyboard.add(InlineKeyboardButton('🔙 Назад', callback_data='back'))
     return keyboard
 
+def back_keyboard():
+    return InlineKeyboardMarkup().add(InlineKeyboardButton('🔙 Назад', callback_data='back'))
+
+# Обработчики команд
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     args = message.get_args()
@@ -274,382 +223,196 @@ async def cmd_start(message: types.Message):
             bonus = random.randint(500, 2000)
             update_balance(message.from_user.id, bonus)
             await message.answer(
-                blue_card("🎉 РЕФЕРАЛЬНЫЙ БОНУС", 
-                f"Вы получили: {bonus} SuslikCoin!\n"
-                f"Приглашайте друзей и получайте бонусы!"),
-                reply_markup=main_keyboard()
+                f"🎉 Вы получили реферальный бонус: {bonus} SuslikCoin!",
+                reply_markup=main_menu_keyboard()
             )
     
     register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     await message.answer(
-        blue_card("🎰 ДОБРО ПОЖАЛОВАТЬ В SUSLIK CASINO", 
-        "💰 Играй, выигрывай и становись лучшим!\n"
-        "👇 Выберите действие из меню ниже:"),
-        reply_markup=main_keyboard(message.from_user.username == ADMIN_USERNAME)
+        "🎰 Добро пожаловать в Suslik Casino!\nВыберите действие:",
+        reply_markup=main_menu_keyboard()
     )
 
-@dp.message_handler(text=blue_button("🎰 Игры"))
-async def show_games_menu(message: types.Message):
-    await message.answer(
-        blue_card("🎮 ВЫБОР ИГРЫ", 
-        "Выберите игру из списка ниже:"),
+@dp.callback_query_handler(lambda c: c.data == 'back')
+async def back_to_menu(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🎰 Главное меню:",
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data == 'games')
+async def show_games(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🎮 Выберите игру:",
         reply_markup=games_keyboard()
     )
+    await callback.answer()
 
-@dp.message_handler(text=blue_button("💰 Баланс"))
-async def show_balance(message: types.Message):
-    user = get_user(message.from_user.id)
-    await message.answer(
-        blue_card("💼 ВАШ БАЛАНС", 
-        f"💰 На счету: {user[3]} SuslikCoin\n"
+@dp.callback_query_handler(lambda c: c.data == 'balance')
+async def show_balance(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    await callback.message.edit_text(
+        f"💰 Ваш баланс: {user[3]} SuslikCoin\n"
         f"🏆 Всего выиграно: {user[8]}\n"
-        f"💸 Всего проиграно: {user[9]}")
+        f"💸 Всего проиграно: {user[9]}",
+        reply_markup=main_menu_keyboard()
     )
+    await callback.answer()
 
-@dp.message_handler(text=blue_button("🏆 Топ"))
-async def show_top(message: types.Message):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT username, balance FROM users ORDER BY balance DESC LIMIT 10')
-    top = cursor.fetchall()
-    conn.close()
-    
-    text = "🏆 <b>ТОП 10 ИГРОКОВ</b>\n\n"
-    for i, (username, balance) in enumerate(top, 1):
-        text += f"{i}. @{username} - {balance} SC\n"
-    
-    await message.answer(blue_card("🏆 ТОП ИГРОКОВ", text))
-
-@dp.message_handler(text=blue_button("🎁 Бонус"))
-async def daily_bonus(message: types.Message):
-    user = get_user(message.from_user.id)
+@dp.callback_query_handler(lambda c: c.data == 'bonus')
+async def daily_bonus(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
     today = datetime.now().strftime('%Y-%m-%d')
     
     if user[4] == today:
-        await message.answer(blue_card("🚫 УЖЕ ПОЛУЧАЛИ", "Вы уже получали бонус сегодня!"))
+        await callback.answer("Вы уже получали бонус сегодня!", show_alert=True)
         return
     
     bonus = random.randint(5000, 25000)
-    update_balance(message.from_user.id, bonus)
+    update_balance(callback.from_user.id, bonus)
     
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('UPDATE users SET last_daily = ? WHERE user_id = ?', (today, message.from_user.id))
+    cursor.execute('UPDATE users SET last_daily = ? WHERE user_id = ?', (today, callback.from_user.id))
     conn.commit()
     conn.close()
     
-    await message.answer(blue_card("🎉 БОНУС", f"Вы получили: {bonus} SuslikCoin!"))
+    await callback.message.edit_text(
+        f"🎉 Вы получили бонус: {bonus} SuslikCoin!",
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
 
-@dp.message_handler(text=blue_button("💼 Работать"))
-async def work(message: types.Message):
-    user = get_user(message.from_user.id)
+@dp.callback_query_handler(lambda c: c.data == 'work')
+async def work(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
     now = datetime.now()
     
     if user[5]:
         last_work = datetime.strptime(user[5], '%Y-%m-%d %H:%M:%S')
         if (now - last_work) < timedelta(minutes=30):
             wait = 30 - (now - last_work).seconds // 60
-            await message.answer(blue_card("⏳ ОЖИДАНИЕ", f"Вы можете работать снова через {wait} минут!"))
+            await callback.answer(f"Вы можете работать снова через {wait} минут!", show_alert=True)
             return
     
     earnings = random.randint(500, 1000)
-    update_balance(message.from_user.id, earnings)
+    update_balance(callback.from_user.id, earnings)
     
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('UPDATE users SET last_work = ? WHERE user_id = ?', (now.strftime('%Y-%m-%d %H:%M:%S'), message.from_user.id))
+    cursor.execute('UPDATE users SET last_work = ? WHERE user_id = ?', (now.strftime('%Y-%m-%d %H:%M:%S'), callback.from_user.id))
     conn.commit()
     conn.close()
     
-    await message.answer(blue_card("💼 ЗАРАБОТОК", f"Вы заработали: {earnings} SuslikCoin!"))
+    await callback.message.edit_text(
+        f"💼 Вы заработали {earnings} SuslikCoin!",
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
 
-@dp.message_handler(text=blue_button("👥 Рефералы"))
-async def show_refs(message: types.Message):
-    user = get_user(message.from_user.id)
-    ref_link = f"https://t.me/{bot.get_me().username}?start={message.from_user.id}"
+@dp.callback_query_handler(lambda c: c.data == 'referrals')
+async def show_referrals(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    ref_link = f"https://t.me/{bot.get_me().username}?start={callback.from_user.id}"
     
-    await message.answer(
-        blue_card("👥 РЕФЕРАЛЫ", 
+    await callback.message.edit_text(
+        f"👥 Реферальная система\n\n"
         f"🔗 Ваша ссылка: <code>{ref_link}</code>\n"
         f"👤 Приглашено: {user[10]}\n\n"
-        f"💎 За каждого приглашенного вы получаете бонус!")
+        f"💎 За каждого приглашенного вы получаете бонус!",
+        reply_markup=main_menu_keyboard()
     )
+    await callback.answer()
 
-@dp.message_handler(text=blue_button("🛍️ Магазин"))
-async def show_shop(message: types.Message):
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        InlineKeyboardButton('💎 VIP статус (7 дней) - 50000 SC', callback_data='buy_vip'),
-        InlineKeyboardButton('🎁 Удвоитель выигрыша - 20000 SC', callback_data='buy_double'),
-        InlineKeyboardButton('🎫 Бесплатная ставка - 15000 SC', callback_data='buy_freebet')
-    )
-    
-    await message.answer(
-        blue_card("🛍️ МАГАЗИН", 
-        "Приобретайте бонусы для улучшения игры!"),
-        reply_markup=keyboard
-    )
-
-@dp.message_handler(text=blue_button("📊 Статистика"))
-async def show_stats(message: types.Message):
-    user = get_user(message.from_user.id)
+@dp.callback_query_handler(lambda c: c.data == 'top')
+async def show_top(callback: types.CallbackQuery):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*), SUM(amount), SUM(win_amount) FROM bets WHERE user_id = ?', (message.from_user.id,))
+    cursor.execute('SELECT username, balance FROM users ORDER BY balance DESC LIMIT 10')
+    top = cursor.fetchall()
+    conn.close()
+    
+    text = "🏆 Топ 10 игроков:\n\n"
+    for i, (username, balance) in enumerate(top, 1):
+        text += f"{i}. @{username} - {balance} SC\n"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data == 'stats')
+async def show_stats(callback: types.CallbackQuery):
+    user = get_user(callback.from_user.id)
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*), SUM(amount), SUM(win_amount) FROM bets WHERE user_id = ?', (callback.from_user.id,))
     stats = cursor.fetchone()
     conn.close()
     
-    await message.answer(
-        blue_card("📊 ВАША СТАТИСТИКА", 
+    await callback.message.edit_text(
+        f"📊 Ваша статистика:\n\n"
         f"🎰 Всего ставок: {stats[0] or 0}\n"
         f"💰 Всего поставлено: {stats[1] or 0} SC\n"
         f"🏆 Всего выиграно: {stats[2] or 0} SC\n"
         f"💸 Чистый доход: {(stats[2] or 0) - (stats[1] or 0)} SC\n\n"
-        f"💎 VIP статус: {'✅' if user[7] else '❌'}")
+        f"💎 VIP статус: {'✅' if user[7] else '❌'}",
+        reply_markup=main_menu_keyboard()
     )
-
-@dp.message_handler(text=blue_button("👑 Админ"))
-async def admin_panel(message: types.Message):
-    if message.from_user.username != ADMIN_USERNAME:
-        await message.answer(blue_card("🚫 ОШИБКА", "Доступ запрещен!"))
-        return
-    
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton('💰 Выдать деньги', callback_data='admin_give'),
-        InlineKeyboardButton('❌ Забрать деньги', callback_data='admin_take'),
-        InlineKeyboardButton('🚷 Бан', callback_data='admin_ban'),
-        InlineKeyboardButton('✅ Разбан', callback_data='admin_unban'),
-        InlineKeyboardButton('📢 Рассылка', callback_data='admin_mail'),
-        InlineKeyboardButton('📊 Статистика', callback_data='admin_stats')
-    )
-    
-    await message.answer(blue_card("👑 АДМИН ПАНЕЛЬ", "Выберите действие:"), reply_markup=keyboard)
-
-@dp.callback_query_handler(lambda c: c.data.startswith('admin_'))
-async def admin_callback(callback: types.CallbackQuery, state: FSMContext):
-    action = callback.data.split('_')[1]
-    
-    if action == 'give':
-        await callback.message.answer(blue_card("💰 ВЫДАТЬ ДЕНЬГИ", "Введите username пользователя:"))
-        await AdminStates.waiting_user.set()
-        await state.update_data(action='give')
-    elif action == 'take':
-        await callback.message.answer(blue_card("❌ ЗАБРАТЬ ДЕНЬГИ", "Введите username пользователя:"))
-        await AdminStates.waiting_user.set()
-        await state.update_data(action='take')
-    elif action == 'ban':
-        await callback.message.answer(blue_card("🚷 ЗАБАНИТЬ", "Введите username пользователя:"))
-        await AdminStates.waiting_user.set()
-        await state.update_data(action='ban')
-    elif action == 'unban':
-        await callback.message.answer(blue_card("✅ РАЗБАНИТЬ", "Введите username пользователя:"))
-        await AdminStates.waiting_user.set()
-        await state.update_data(action='unban')
-    elif action == 'mail':
-        await callback.message.answer(blue_card("📢 РАССЫЛКА", "Введите сообщение для рассылки:"))
-        await AdminStates.waiting_message.set()
-    elif action == 'stats':
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT COUNT(*) FROM users')
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT SUM(balance) FROM users')
-        total_balance = cursor.fetchone()[0] or 0
-        
-        cursor.execute('SELECT COUNT(*) FROM users WHERE banned = 1')
-        banned_users = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT SUM(amount) FROM bets')
-        total_bets = cursor.fetchone()[0] or 0
-        
-        cursor.execute('SELECT SUM(win_amount) FROM bets WHERE result = "win"')
-        total_wins = cursor.fetchone()[0] or 0
-        
-        conn.close()
-        
-        await callback.message.answer(
-            blue_card("📊 СТАТИСТИКА КАЗИНО", 
-            f"👥 Пользователей: {total_users}\n"
-            f"🚷 Забанено: {banned_users}\n"
-            f"💰 Общий баланс: {total_balance} SC\n"
-            f"🎰 Всего ставок: {total_bets} SC\n"
-            f"🏆 Всего выиграно: {total_wins} SC\n"
-            f"💸 Доход казино: {total_bets - total_wins} SC")
-        )
-    
     await callback.answer()
 
-@dp.message_handler(state=AdminStates.waiting_user)
-async def admin_user_input(message: types.Message, state: FSMContext):
-    username = message.text.replace('@', '')
-    user = None
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
-    user = cursor.fetchone()
-    conn.close()
-    
-    if not user:
-        await message.answer(blue_card("❌ ОШИБКА", "Пользователь не найден!"))
-        await state.finish()
-        return
-    
-    data = await state.get_data()
-    action = data.get('action')
-    
-    if action in ['give', 'take']:
-        await message.answer(blue_card(f"{'💰 ВЫДАТЬ' if action == 'give' else '❌ ЗАБРАТЬ'}", f"Введите сумму для @{username}:"))
-        await state.update_data(user_id=user[0], username=username)
-        await AdminStates.waiting_amount.set()
-    elif action == 'ban':
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('UPDATE users SET banned = 1 WHERE user_id = ?', (user[0],))
-        conn.commit()
-        conn.close()
-        
-        await message.answer(blue_card("✅ УСПЕХ", f"Пользователь @{username} забанен!"))
-        await state.finish()
-    elif action == 'unban':
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('UPDATE users SET banned = 0 WHERE user_id = ?', (user[0],))
-        conn.commit()
-        conn.close()
-        
-        await message.answer(blue_card("✅ УСПЕХ", f"Пользователь @{username} разбанен!"))
-        await state.finish()
-
-@dp.message_handler(state=AdminStates.waiting_amount)
-async def admin_amount_input(message: types.Message, state: FSMContext):
-    try:
-        amount = int(message.text)
-        if amount <= 0:
-            await message.answer(blue_card("❌ ОШИБКА", "Сумма должна быть положительной!"))
-            return
-        
-        data = await state.get_data()
-        user_id = data.get('user_id')
-        username = data.get('username')
-        action = data.get('action')
-        
-        if action == 'take':
-            if get_balance(user_id) < amount:
-                await message.answer(blue_card("❌ ОШИБКА", "У пользователя недостаточно средств!"))
-                await state.finish()
-                return
-            amount = -amount
-        
-        update_balance(user_id, amount)
-        
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-        INSERT INTO admin_logs (admin_id, user_id, action, details)
-        VALUES (?, ?, ?, ?)
-        ''', (message.from_user.id, user_id, action, f"Amount: {abs(amount)}"))
-        conn.commit()
-        conn.close()
-        
-        await message.answer(
-            blue_card("✅ УСПЕХ", 
-            f"{'Выдано' if action == 'give' else 'Изъято'} {abs(amount)} SC пользователю @{username}")
-        )
-        
-        try:
-            await bot.send_message(
-                user_id,
-                blue_card("👑 АДМИНИСТРАТОР", 
-                f"Вам {'начислили' if action == 'give' else 'изъяли'} {abs(amount)} SuslikCoin")
-            )
-        except:
-            pass
-        
-        await state.finish()
-    except ValueError:
-        await message.answer(blue_card("❌ ОШИБКА", "Пожалуйста, введите число!"))
-
-@dp.message_handler(state=AdminStates.waiting_message)
-async def admin_mail_input(message: types.Message, state: FSMContext):
-    mail_text = message.text
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM users WHERE banned = 0')
-    users = cursor.fetchall()
-    conn.close()
-    
-    success = 0
-    for user in users:
-        try:
-            await bot.send_message(user[0], blue_card("📢 СООБЩЕНИЕ ОТ АДМИНИСТРАЦИИ", mail_text))
-            success += 1
-        except:
-            continue
-    
-    await message.answer(blue_card("✅ УСПЕХ", f"Рассылка завершена! Доставлено {success} пользователям."))
-    await state.finish()
-
+# Обработчики игр
 @dp.callback_query_handler(lambda c: c.data.startswith('game_'))
-async def game_callback(callback: types.CallbackQuery, state: FSMContext):
+async def select_game(callback: types.CallbackQuery, state: FSMContext):
     game = callback.data.split('_')[1]
-    await bot.answer_callback_query(callback.id)
-    
     await state.update_data(game_type=game)
-    await bot.send_message(
-        callback.from_user.id,
-        blue_card("💰 СУММА СТАВКИ", 
-        "Введите сумму, которую хотите поставить:"),
+    await callback.message.edit_text(
+        "💰 Введите сумму ставки:",
+        reply_markup=back_keyboard()
     )
     await GameStates.waiting_bet_amount.set()
+    await callback.answer()
 
 @dp.message_handler(state=GameStates.waiting_bet_amount)
-async def bet_amount_input(message: types.Message, state: FSMContext):
+async def process_bet_amount(message: types.Message, state: FSMContext):
     try:
         amount = int(message.text)
         if amount <= 0:
-            await message.answer(blue_card("❌ ОШИБКА", "Сумма должна быть положительной!"))
+            await message.answer("Сумма должна быть положительной!")
             return
         
-        user_balance = get_balance(message.from_user.id)
-        if amount > user_balance:
-            await message.answer(blue_card("❌ ОШИБКА", "Недостаточно средств на балансе!"))
+        balance = get_balance(message.from_user.id)
+        if amount > balance:
+            await message.answer("Недостаточно средств на балансе!")
             await state.finish()
             return
         
         data = await state.get_data()
-        game_type = data.get('game_type')
-        
-        await state.update_data(bet_amount=amount)
+        game_type = data['game_type']
         
         if game_type == 'cube':
-            keyboard = InlineKeyboardMarkup()
+            keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
-                InlineKeyboardButton('🔵 Чет', callback_data='bet_even'),
-                InlineKeyboardButton('⚫ Нечет', callback_data='bet_odd')
+                InlineKeyboardButton('Чет', callback_data='bet_even'),
+                InlineKeyboardButton('Нечет', callback_data='bet_odd')
             )
             await message.answer(
-                blue_card("🎲 ВЫБОР СТАВКИ", 
-                "Выберите, на что ставите:"),
+                "Выберите ставку:",
                 reply_markup=keyboard
             )
             await GameStates.waiting_cube_bet.set()
         elif game_type == 'roulette':
             keyboard = InlineKeyboardMarkup(row_width=2)
-            buttons = [
+            keyboard.add(
                 InlineKeyboardButton('🔴 Красное (x2)', callback_data='color_red'),
                 InlineKeyboardButton('⚫ Черное (x2)', callback_data='color_black'),
                 InlineKeyboardButton('🟢 Зеленое (x14)', callback_data='color_green'),
                 InlineKeyboardButton('🔢 Число (x36)', callback_data='bet_number')
-            ]
-            keyboard.add(*buttons)
+            )
             await message.answer(
-                blue_card("🎡 ВЫБОР СТАВКИ", 
-                "Выберите тип ставки в рулетке:"),
+                "Выберите тип ставки:",
                 reply_markup=keyboard
             )
             await GameStates.waiting_roulette_bet.set()
@@ -657,14 +420,14 @@ async def bet_amount_input(message: types.Message, state: FSMContext):
             await process_game(message, state)
     
     except ValueError:
-        await message.answer(blue_card("❌ ОШИБКА", "Пожалуйста, введите число!"))
+        await message.answer("Пожалуйста, введите число!")
 
 @dp.callback_query_handler(lambda c: c.data.startswith('bet_'), state=GameStates.waiting_cube_bet)
 async def cube_bet_callback(callback: types.CallbackQuery, state: FSMContext):
     bet_type = 'чет' if callback.data.endswith('even') else 'нечет'
     await state.update_data(cube_bet=bet_type)
-    await bot.answer_callback_query(callback.id)
     await process_game(callback.message, state)
+    await callback.answer()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('color_'), state=GameStates.waiting_roulette_bet)
 async def roulette_color_callback(callback: types.CallbackQuery, state: FSMContext):
@@ -673,62 +436,58 @@ async def roulette_color_callback(callback: types.CallbackQuery, state: FSMConte
         'color_black': 'черное',
         'color_green': 'зеленое'
     }[callback.data]
-    
     await state.update_data(roulette_bet='color', roulette_value=color)
-    await bot.answer_callback_query(callback.id)
     await process_game(callback.message, state)
+    await callback.answer()
 
 @dp.callback_query_handler(lambda c: c.data == 'bet_number', state=GameStates.waiting_roulette_bet)
 async def roulette_number_callback(callback: types.CallbackQuery, state: FSMContext):
-    await bot.answer_callback_query(callback.id)
-    await callback.message.answer(blue_card("🔢 ВЫБОР ЧИСЛА", "Введите число от 0 до 36:"))
+    await callback.message.edit_text("Введите число от 0 до 36:")
     await GameStates.waiting_roulette_number.set()
+    await callback.answer()
 
 @dp.message_handler(state=GameStates.waiting_roulette_number)
 async def roulette_number_input(message: types.Message, state: FSMContext):
     try:
         number = int(message.text)
         if number < 0 or number > 36:
-            await message.answer(blue_card("❌ ОШИБКА", "Число должно быть от 0 до 36!"))
+            await message.answer("Число должно быть от 0 до 36!")
             return
         
         await state.update_data(roulette_bet='number', roulette_value=number)
         await process_game(message, state)
     except ValueError:
-        await message.answer(blue_card("❌ ОШИБКА", "Пожалуйста, введите число от 0 до 36!"))
+        await message.answer("Пожалуйста, введите число от 0 до 36!")
 
-async def process_game(message: types.Message, state: FSMContext):
+async def process_game(message_or_call, state: FSMContext):
+    if isinstance(message_or_call, types.CallbackQuery):
+        message = message_or_call.message
+    else:
+        message = message_or_call
+    
     data = await state.get_data()
-    game_type = data.get('game_type')
-    amount = data.get('bet_amount')
+    game_type = data['game_type']
+    amount = data['bet_amount']
     user_id = message.from_user.id
-    user = get_user(user_id)
-    username = user[1] or user[2]
+    username = get_user(user_id)[1] or get_user(user_id)[2]
     
-    if user[11]:
-        await message.answer(blue_card("🚫 ОШИБКА", "Ваш аккаунт заблокирован!"))
-        await state.finish()
-        return
-    
+    # Отправка ставки в канал
     try:
         bet_msg = await bot.send_message(
             CHANNEL_USERNAME,
-            blue_card(f"🎰 НОВАЯ СТАВКА ({game_type.upper()})",
+            f"🎰 Новая ставка!\n\n"
             f"👤 Игрок: @{username}\n"
-            f"💰 Сумма: {amount} SC\n"
-            f"🏆 Возможный выигрыш: {calculate_possible_win(game_type, amount)} SC")
+            f"🎮 Игра: {game_type}\n"
+            f"💰 Сумма: {amount} SC"
         )
         
-        anim_msg = await bot.send_message(
-            CHANNEL_USERNAME,
-            blue_card("🔄 ИГРА НАЧИНАЕТСЯ",
-            "Подождите, идет обработка ставки...")
-        )
-        
+        # Анимация
+        anim_msg = await bot.send_message(CHANNEL_USERNAME, "🔄 Идет игра...")
         await asyncio.sleep(2)
         
+        # Игровая логика
         if game_type == 'cube':
-            bet_type = data.get('cube_bet')
+            bet_type = data['cube_bet']
             game_result = play_cube(bet_type)
             win_amount = amount * 2 if game_result['win'] else 0
             game_output = f"🎲 Результат: {game_result['result']} ({'чет' if game_result['result'] % 2 == 0 else 'нечет'})"
@@ -737,8 +496,8 @@ async def process_game(message: types.Message, state: FSMContext):
             win_amount = amount * game_result['multiplier'] if game_result['win'] else 0
             game_output = f"🎰 {' | '.join(game_result['reels'])}"
         elif game_type == 'roulette':
-            bet_type = data.get('roulette_bet')
-            bet_value = data.get('roulette_value')
+            bet_type = data['roulette_bet']
+            bet_value = data['roulette_value']
             game_result = play_roulette(bet_type, bet_value)
             win_amount = amount * game_result.get('multiplier', 0) if game_result['win'] else 0
             game_output = f"🎡 Выпало: {game_result['number']} ({game_result['color']})"
@@ -757,15 +516,15 @@ async def process_game(message: types.Message, state: FSMContext):
         
         await bot.delete_message(CHANNEL_USERNAME, anim_msg.message_id)
         
+        # Результат в канал
         result_msg = await bot.send_message(
             CHANNEL_USERNAME,
-            blue_card(f"🏆 РЕЗУЛЬТАТ ({game_type.upper()})",
             f"{game_output}\n\n"
             f"👤 Игрок: @{username}\n"
-            f"💰 Ставка: {amount} SC\n"
-            f"🏆 Результат: {'Выигрыш ' + str(win_amount) + ' SC' if game_result['win'] else 'Проигрыш'}")
+            f"🏆 Результат: {'Выигрыш ' + str(win_amount) + ' SC' if game_result['win'] else 'Проигрыш'}"
         )
         
+        # Обновление баланса
         if game_result['win']:
             update_balance(user_id, win_amount - amount)
             result_text = f"🎉 Вы выиграли {win_amount} SC!"
@@ -773,80 +532,191 @@ async def process_game(message: types.Message, state: FSMContext):
             update_balance(user_id, -amount)
             result_text = "😢 Вы проиграли."
         
-        save_bet(
-            user_id=user_id,
-            game_type=game_type,
-            amount=amount,
-            result='win' if game_result['win'] else 'lose',
-            win_amount=win_amount if game_result['win'] else 0
-        )
+        save_bet(user_id, game_type, amount, 'win' if game_result['win'] else 'lose', win_amount)
         
+        # Отправка результата пользователю
         await message.answer(
-            blue_card("🎰 РЕЗУЛЬТАТ ВАШЕЙ СТАВКИ",
-            f"Ссылка на ставку: {bet_msg.url}\n"
-            f"Ссылка на результат: {result_msg.url}\n\n"
+            f"🎰 Ваша ставка: {bet_msg.url}\n"
+            f"🏆 Результат: {result_msg.url}\n\n"
             f"{result_text}\n"
-            f"💳 Текущий баланс: {get_balance(user_id)} SC")
+            f"💳 Текущий баланс: {get_balance(user_id)} SC",
+            reply_markup=main_menu_keyboard()
         )
-        
+    
     except Exception as e:
-        await message.answer(blue_card("❌ ОШИБКА", "Произошла ошибка при обработке ставки. Попробуйте позже."))
+        await message.answer("Произошла ошибка при обработке ставки. Попробуйте позже.")
         print(f"Error: {e}")
     
     await state.finish()
 
-@dp.callback_query_handler(lambda c: c.data.startswith('buy_'))
-async def buy_item(callback: types.CallbackQuery):
-    item_type = callback.data.split('_')[1]
-    user_id = callback.from_user.id
-    user = get_user(user_id)
-    
-    items = {
-        'vip': {'name': 'VIP статус', 'price': 50000, 'days': 7},
-        'double': {'name': 'Удвоитель выигрыша', 'price': 20000, 'uses': 1},
-        'freebet': {'name': 'Бесплатная ставка', 'price': 15000, 'uses': 1}
-    }
-    
-    if item_type not in items:
-        await callback.answer("Товар не найден!")
+# Админ-панель
+@dp.callback_query_handler(lambda c: c.data == 'admin')
+async def admin_panel(callback: types.CallbackQuery):
+    if callback.from_user.username != ADMIN_USERNAME:
+        await callback.answer("Доступ запрещен!", show_alert=True)
         return
     
-    item = items[item_type]
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton('💰 Выдать деньги', callback_data='admin_give'),
+        InlineKeyboardButton('❌ Забрать деньги', callback_data='admin_take'),
+        InlineKeyboardButton('📢 Рассылка', callback_data='admin_mail'),
+        InlineKeyboardButton('📊 Статистика', callback_data='admin_stats'),
+        InlineKeyboardButton('🔙 Назад', callback_data='back')
+    )
     
-    if user[3] < item['price']:
-        await callback.answer("Недостаточно средств!")
-        return
+    await callback.message.edit_text(
+        "👑 Админ-панель:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('admin_'))
+async def admin_action(callback: types.CallbackQuery, state: FSMContext):
+    action = callback.data.split('_')[1]
     
-    update_balance(user_id, -item['price'])
+    if action == 'give':
+        await callback.message.edit_text(
+            "Введите username пользователя для выдачи денег:",
+            reply_markup=back_keyboard()
+        )
+        await AdminStates.waiting_user.set()
+        await state.update_data(action='give')
+    elif action == 'take':
+        await callback.message.edit_text(
+            "Введите username пользователя для изъятия денег:",
+            reply_markup=back_keyboard()
+        )
+        await AdminStates.waiting_user.set()
+        await state.update_data(action='take')
+    elif action == 'mail':
+        await callback.message.edit_text(
+            "Введите сообщение для рассылки:",
+            reply_markup=back_keyboard()
+        )
+        await AdminStates.waiting_message.set()
+    elif action == 'stats':
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT SUM(balance) FROM users')
+        total_balance = cursor.fetchone()[0] or 0
+        
+        cursor.execute('SELECT SUM(amount) FROM bets')
+        total_bets = cursor.fetchone()[0] or 0
+        
+        cursor.execute('SELECT SUM(win_amount) FROM bets WHERE result = "win"')
+        total_wins = cursor.fetchone()[0] or 0
+        
+        conn.close()
+        
+        await callback.message.edit_text(
+            f"📊 Статистика казино:\n\n"
+            f"👥 Пользователей: {total_users}\n"
+            f"💰 Общий баланс: {total_balance} SC\n"
+            f"🎰 Всего ставок: {total_bets} SC\n"
+            f"🏆 Всего выиграно: {total_wins} SC\n"
+            f"💸 Доход казино: {total_bets - total_wins} SC",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton('🔙 Назад', callback_data='admin'))
+        )
+    
+    await callback.answer()
+
+@dp.message_handler(state=AdminStates.waiting_user)
+async def admin_user_input(message: types.Message, state: FSMContext):
+    username = message.text.replace('@', '')
+    user = None
     
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    if item_type == 'vip':
-        expire_date = (datetime.now() + timedelta(days=item['days'])).strftime('%Y-%m-%d')
-        cursor.execute('UPDATE users SET vip_status = 1 WHERE user_id = ?', (user_id,))
-    elif item_type == 'double':
-        cursor.execute('INSERT INTO items (user_id, name, effect) VALUES (?, ?, ?)', 
-                      (user_id, item['name'], 'double_win'))
-    elif item_type == 'freebet':
-        cursor.execute('INSERT INTO items (user_id, name, effect) VALUES (?, ?, ?)', 
-                      (user_id, item['name'], 'free_bet'))
-    
-    conn.commit()
+    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+    user = cursor.fetchone()
     conn.close()
     
-    await callback.answer(f"Вы приобрели {item['name']}!")
-    await bot.send_message(
-        user_id,
-        blue_card("🛍️ ПОКУПКА",
-        f"Вы успешно приобрели {item['name']} за {item['price']} SC!\n\n"
-        f"💳 Текущий баланс: {get_balance(user_id)} SC")
+    if not user:
+        await message.answer("Пользователь не найден!")
+        await state.finish()
+        return
+    
+    data = await state.get_data()
+    action = data.get('action')
+    
+    await state.update_data(user_id=user[0], username=username)
+    await message.answer(
+        f"Пользователь: @{username}\n"
+        f"Текущий баланс: {user[3]} SC\n\n"
+        f"Введите сумму для {'выдачи' if action == 'give' else 'изъятия'}:",
+        reply_markup=back_keyboard()
     )
+    await AdminStates.waiting_amount.set()
+
+@dp.message_handler(state=AdminStates.waiting_amount)
+async def admin_amount_input(message: types.Message, state: FSMContext):
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            await message.answer("Сумма должна быть положительной!")
+            return
+        
+        data = await state.get_data()
+        user_id = data.get('user_id')
+        username = data.get('username')
+        action = data.get('action')
+        
+        if action == 'take':
+            if get_balance(user_id) < amount:
+                await message.answer("У пользователя недостаточно средств!")
+                await state.finish()
+                return
+            amount = -amount
+        
+        update_balance(user_id, amount)
+        
+        await message.answer(
+            f"✅ Успешно! {'Выдано' if action == 'give' else 'Изъято'} {abs(amount)} SC пользователю @{username}",
+            reply_markup=main_menu_keyboard()
+        )
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"👑 Администратор {'начислил' if action == 'give' else 'изъял'} вам {abs(amount)} SuslikCoin"
+            )
+        except:
+            pass
+        
+        await state.finish()
+    except ValueError:
+        await message.answer("Пожалуйста, введите число!")
+
+@dp.message_handler(state=AdminStates.waiting_message)
+async def admin_mail_input(message: types.Message, state: FSMContext):
+    mail_text = message.text
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id FROM users')
+    users = cursor.fetchall()
+    conn.close()
+    
+    success = 0
+    for user in users:
+        try:
+            await bot.send_message(user[0], f"📢 Сообщение от администрации:\n\n{mail_text}")
+            success += 1
+        except:
+            continue
+    
+    await message.answer(
+        f"✅ Рассылка завершена! Доставлено {success} пользователям.",
+        reply_markup=main_menu_keyboard()
+    )
+    await state.finish()
 
 if __name__ == '__main__':
     init_db()
-
     executor.start_polling(dp, skip_updates=True)
-
-
-
