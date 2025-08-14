@@ -31,6 +31,7 @@ class GameStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_user = State()
     waiting_amount = State()
+    waiting_message = State() 
 
 # База данных
 def init_db():
@@ -720,3 +721,4 @@ async def admin_mail_input(message: types.Message, state: FSMContext):
 if __name__ == '__main__':
     init_db()
     executor.start_polling(dp, skip_updates=True)
+
