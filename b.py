@@ -38,12 +38,13 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    cursor.execute('''
+    # Создаем таблицу users с фиксированным значением INITIAL_BALANCE
+    cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         first_name TEXT,
-        balance INTEGER DEFAULT ?,
+        balance INTEGER DEFAULT {INITIAL_BALANCE},
         last_daily TEXT,
         last_work TEXT,
         reg_date TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -51,7 +52,7 @@ def init_db():
         total_wins INTEGER DEFAULT 0,
         total_losses INTEGER DEFAULT 0,
         ref_count INTEGER DEFAULT 0
-    )''', (INITIAL_BALANCE,))
+    )''')
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS bets (
@@ -721,4 +722,5 @@ async def admin_mail_input(message: types.Message, state: FSMContext):
 if __name__ == '__main__':
     init_db()
     executor.start_polling(dp, skip_updates=True)
+
 
