@@ -66,7 +66,7 @@ def init_db():
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         first_name TEXT,
-        balance INTEGER DEFAULT ?,
+        balance INTEGER DEFAULT 10000,
         last_daily TEXT,
         last_work TEXT,
         reg_date TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -75,7 +75,7 @@ def init_db():
         total_losses INTEGER DEFAULT 0,
         ref_count INTEGER DEFAULT 0,
         banned INTEGER DEFAULT 0
-    )''', (INITIAL_BALANCE,))
+    )''')
     
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS bets (
@@ -89,6 +89,7 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(user_id)
     )''')
     
+    # Создаем таблицу рефералов
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS referrals (
         ref_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,12 +118,13 @@ def init_db():
         effect TEXT
     )''')
     
-    cursor.execute('''
-    INSERT OR IGNORE INTO items (name, price, effect) VALUES 
-    ('VIP статус', 50000, 'vip'),
-    ('Удвоитель выигрыша', 20000, 'double_win'),
-    ('Бесплатная ставка', 15000, 'free_bet')
-    ''')
+    cursor.executemany('''
+    INSERT OR IGNORE INTO items (name, price, effect) VALUES (?, ?, ?)
+    ''', [
+        ('VIP статус', 50000, 'vip'),
+        ('Удвоитель выигрыша', 20000, 'double_win'),
+        ('Бесплатная ставка', 15000, 'free_bet')
+    ])
     
     conn.commit()
     conn.close()
@@ -843,4 +845,5 @@ async def buy_item(callback: types.CallbackQuery):
 
 if __name__ == '__main__':
     init_db()
+
     executor.start_polling(dp, skip_updates=True)
