@@ -16,7 +16,8 @@ CHANNEL_USERNAME = "@suslikcasino"
 INITIAL_BALANCE = 5000
 DB_NAME = 'suslik_casino.db'
 
-bot = Bot(token=TOKEN)
+# Инициализация бота
+bot = Bot(token=TOKEN, parse_mode='HTML')
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
@@ -31,14 +32,13 @@ class GameStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_user = State()
     waiting_amount = State()
-    waiting_message = State() 
+    waiting_message = State()
 
-# База данных
+# Инициализация БД
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Создаем таблицу users с фиксированным значением INITIAL_BALANCE
     cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -109,12 +109,8 @@ def update_balance(user_id, amount):
     conn.close()
 
 def get_balance(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-    balance = cursor.fetchone()[0]
-    conn.close()
-    return balance
+    user = get_user(user_id)
+    return user[3] if user else 0
 
 def save_bet(user_id, game_type, amount, result, win_amount):
     conn = sqlite3.connect(DB_NAME)
@@ -138,8 +134,13 @@ def add_referral(referrer_id, referred_id):
 def play_cube(bet_type):
     result = random.randint(1, 6)
     is_even = result % 2 == 0
-    win = (bet_type == 'чет' and is_even) or (bet_type == 'нечет' and not is_even)
-    return {'result': result, 'win': win}
+    is_win = (bet_type == 'чёт' and is_even) or (bet_type == 'нечёт' and not is_even)
+    return {
+        'result': result,
+        'win': is_win,
+        'bet_type': bet_type,
+        'actual_type': 'чёт' if is_even else 'нечёт'
+    }
 
 def play_slots():
     symbols = ['🍒', '🍋', '🍊', '🍇', '🍉', '7️⃣']
@@ -168,15 +169,6 @@ def play_roulette(bet_type, bet_value):
         return {'number': number, 'win': True, 'multiplier': 36}
     
     return {'number': number, 'color': 'красное' if is_red else 'черное', 'win': False}
-
-def play_dice():
-    return {'result': random.randint(1, 6), 'win': random.random() < 0.5}
-
-def play_football():
-    return {'win': random.random() < 0.55}
-
-def play_basketball():
-    return {'win': random.random() < 0.5}
 
 # Клавиатуры
 def main_menu_keyboard():
@@ -231,7 +223,7 @@ async def cmd_start(message: types.Message):
     
     register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     await message.answer(
-        "🎰 Добро пожаловать в Suslik Casino!\nВыберите действие:",
+        "🎰 Добро пожаловать в Casino Bot!\nВыберите действие:",
         reply_markup=main_menu_keyboard()
     )
 
@@ -271,7 +263,7 @@ async def daily_bonus(callback: types.CallbackQuery):
         await callback.answer("Вы уже получали бонус сегодня!", show_alert=True)
         return
     
-    bonus = random.randint(5000, 25000)
+    bonus = random.randint(500, 2000)
     update_balance(callback.from_user.id, bonus)
     
     conn = sqlite3.connect(DB_NAME)
@@ -298,7 +290,7 @@ async def work(callback: types.CallbackQuery):
             await callback.answer(f"Вы можете работать снова через {wait} минут!", show_alert=True)
             return
     
-    earnings = random.randint(500, 1000)
+    earnings = random.randint(500, 1500)
     update_balance(callback.from_user.id, earnings)
     
     conn = sqlite3.connect(DB_NAME)
@@ -337,7 +329,7 @@ async def show_top(callback: types.CallbackQuery):
     
     text = "🏆 Топ 10 игроков:\n\n"
     for i, (username, balance) in enumerate(top, 1):
-        text += f"{i}. @{username} - {balance} SC\n"
+        text += f"{i}. @{username if username else 'N/A'} - {balance} SC\n"
     
     await callback.message.edit_text(
         text,
@@ -387,24 +379,22 @@ async def process_bet_amount(message: types.Message, state: FSMContext):
         
         balance = get_balance(message.from_user.id)
         if amount > balance:
-            await message.answer("Недостаточно средств на балансе!")
+            await message.answer(f"Недостаточно средств! Ваш баланс: {balance} SC")
             await state.finish()
             return
         
-        # Сохраняем сумму ставки в состоянии
         await state.update_data(bet_amount=amount)
-        
         data = await state.get_data()
         game_type = data['game_type']
         
         if game_type == 'cube':
             keyboard = InlineKeyboardMarkup(row_width=2)
             keyboard.add(
-                InlineKeyboardButton('Чет', callback_data='bet_even'),
-                InlineKeyboardButton('Нечет', callback_data='bet_odd')
+                InlineKeyboardButton('Чёт (x2)', callback_data='bet_even'),
+                InlineKeyboardButton('Нечёт (x2)', callback_data='bet_odd')
             )
             await message.answer(
-                "Выберите ставку:",
+                "Выберите тип ставки:",
                 reply_markup=keyboard
             )
             await GameStates.waiting_cube_bet.set()
@@ -427,21 +417,21 @@ async def process_bet_amount(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("Пожалуйста, введите число!")
 
-@dp.callback_query_handler(lambda c: c.data.startswith('bet_'), state=GameStates.waiting_cube_bet)
+@dp.callback_query_handler(lambda c: c.data in ['bet_even', 'bet_odd'], state=GameStates.waiting_cube_bet)
 async def cube_bet_callback(callback: types.CallbackQuery, state: FSMContext):
-    bet_type = 'чет' if callback.data.endswith('even') else 'нечет'
+    bet_type = 'чёт' if callback.data == 'bet_even' else 'нечёт'
     await state.update_data(cube_bet=bet_type)
     await process_game(callback.message, state)
     await callback.answer()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('color_'), state=GameStates.waiting_roulette_bet)
 async def roulette_color_callback(callback: types.CallbackQuery, state: FSMContext):
-    color = {
+    color_map = {
         'color_red': 'красное',
         'color_black': 'черное',
         'color_green': 'зеленое'
-    }[callback.data]
-    await state.update_data(roulette_bet='color', roulette_value=color)
+    }
+    await state.update_data(roulette_bet='color', roulette_value=color_map[callback.data])
     await process_game(callback.message, state)
     await callback.answer()
 
@@ -467,17 +457,28 @@ async def roulette_number_input(message: types.Message, state: FSMContext):
 async def process_game(message_or_call, state: FSMContext):
     if isinstance(message_or_call, types.CallbackQuery):
         message = message_or_call.message
+        await message_or_call.answer()
     else:
         message = message_or_call
     
     data = await state.get_data()
-    game_type = data['game_type']
-    amount = data['bet_amount']
-    user_id = message.from_user.id
-    username = get_user(user_id)[1] or get_user(user_id)[2]
     
-    # Отправка ставки в канал
+    if 'bet_amount' not in data:
+        await message.answer("Ошибка: сумма ставки не найдена")
+        await state.finish()
+        return
+    
+    amount = data['bet_amount']
+    game_type = data['game_type']
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    username = user[1] or user[2] or str(user_id)
+    
+    # Сразу списываем ставку
+    update_balance(user_id, -amount)
+    
     try:
+        # Отправка ставки в канал
         bet_msg = await bot.send_message(
             CHANNEL_USERNAME,
             f"🎰 Новая ставка!\n\n"
@@ -486,8 +487,8 @@ async def process_game(message_or_call, state: FSMContext):
             f"💰 Сумма: {amount} SC"
         )
         
-        # Анимация
-        anim_msg = await bot.send_message(CHANNEL_USERNAME, "🔄 Идет игра...")
+        # Быстрая анимация (2 секунды)
+        anim_msg = await bot.send_message(CHANNEL_USERNAME, "🎰 Крутим...")
         await asyncio.sleep(2)
         
         # Игровая логика
@@ -495,69 +496,68 @@ async def process_game(message_or_call, state: FSMContext):
             bet_type = data['cube_bet']
             game_result = play_cube(bet_type)
             win_amount = amount * 2 if game_result['win'] else 0
-            game_output = f"🎲 Результат: {game_result['result']} ({'чет' if game_result['result'] % 2 == 0 else 'нечет'})"
+            game_output = f"🎲 Выпало: {game_result['result']} ({game_result['actual_type']})"
+            result_text = f"Вы {'выиграли' if game_result['win'] else 'проиграли'}!"
         elif game_type == 'slots':
             game_result = play_slots()
-            win_amount = amount * game_result['multiplier'] if game_result['win'] else 0
+            win_amount = amount * game_result.get('multiplier', 0) if game_result['win'] else 0
             game_output = f"🎰 {' | '.join(game_result['reels'])}"
+            result_text = f"Вы {'выиграли' if game_result['win'] else 'проиграли'}!"
         elif game_type == 'roulette':
             bet_type = data['roulette_bet']
             bet_value = data['roulette_value']
             game_result = play_roulette(bet_type, bet_value)
             win_amount = amount * game_result.get('multiplier', 0) if game_result['win'] else 0
             game_output = f"🎡 Выпало: {game_result['number']} ({game_result['color']})"
-        elif game_type == 'dice':
-            game_result = play_dice()
-            win_amount = amount * 4 if game_result['win'] else 0
-            game_output = "🎯 Вы " + ("попали в цель!" if game_result['win'] else "промахнулись!")
-        elif game_type == 'football':
-            game_result = play_football()
-            win_amount = int(amount * 1.8) if game_result['win'] else 0
-            game_output = "⚽ Вы " + ("забили гол!" if game_result['win'] else "промахнулись!")
-        elif game_type == 'basketball':
-            game_result = play_basketball()
-            win_amount = amount * 2 if game_result['win'] else 0
-            game_output = "🏀 Вы " + ("попали в кольцо!" if game_result['win'] else "промахнулись!")
+            result_text = f"Вы {'выиграли' if game_result['win'] else 'проиграли'}!"
         
+        # Удаляем анимацию
         await bot.delete_message(CHANNEL_USERNAME, anim_msg.message_id)
+        
+        # Обновляем баланс если выиграл
+        if win_amount > 0:
+            update_balance(user_id, win_amount)
+        
+        # Сохраняем результат ставки
+        save_bet(user_id, game_type, amount, 'win' if win_amount > 0 else 'lose', win_amount)
         
         # Результат в канал
         result_msg = await bot.send_message(
             CHANNEL_USERNAME,
             f"{game_output}\n\n"
             f"👤 Игрок: @{username}\n"
-            f"🏆 Результат: {'Выигрыш ' + str(win_amount) + ' SC' if game_result['win'] else 'Проигрыш'}"
+            f"🏆 Результат: {'Выигрыш ' + str(win_amount) + ' SC' if win_amount > 0 else 'Проигрыш'}\n"
+            f"💵 Сумма ставки: {amount} SC"
         )
         
-        # Обновление баланса
-        if game_result['win']:
-            update_balance(user_id, win_amount - amount)
-            result_text = f"🎉 Вы выиграли {win_amount} SC!"
-        else:
-            update_balance(user_id, -amount)
-            result_text = "😢 Вы проиграли."
-        
-        save_bet(user_id, game_type, amount, 'win' if game_result['win'] else 'lose', win_amount)
-        
-        # Отправка результата пользователю
+        # Результат пользователю
         await message.answer(
-            f"🎰 Ваша ставка: {bet_msg.url}\n"
-            f"🏆 Результат: {result_msg.url}\n\n"
-            f"{result_text}\n"
-            f"💳 Текущий баланс: {get_balance(user_id)} SC",
+            f"🎮 Игра: {game_type.capitalize()}\n"
+            f"💰 Ставка: {amount} SC\n\n"
+            f"{game_output}\n"
+            f"🏆 {result_text}\n\n"
+            f"💵 Выигрыш: {win_amount if win_amount > 0 else 0} SC\n"
+            f"💳 Новый баланс: {get_balance(user_id)} SC\n\n"
+            f"📢 Ставка: {bet_msg.url}\n"
+            f"📢 Результат: {result_msg.url}",
             reply_markup=main_menu_keyboard()
         )
     
     except Exception as e:
-        await message.answer("Произошла ошибка при обработке ставки. Попробуйте позже.")
-        print(f"Error: {e}")
+        logger.error(f"Ошибка в игре: {e}")
+        # Возвращаем ставку при ошибке
+        update_balance(user_id, amount)
+        await message.answer(
+            "⚠️ Произошла ошибка при обработке ставки. Ваши средства возвращены.",
+            reply_markup=main_menu_keyboard()
+        )
     
     await state.finish()
 
 # Админ-панель
 @dp.callback_query_handler(lambda c: c.data == 'admin')
 async def admin_panel(callback: types.CallbackQuery):
-    if callback.from_user.username != ADMIN_USERNAME:
+    if callback.from_user.username != ADMIN_USERNAME.lstrip('@'):
         await callback.answer("Доступ запрещен!", show_alert=True)
         return
     
@@ -722,10 +722,7 @@ async def admin_mail_input(message: types.Message, state: FSMContext):
     )
     await state.finish()
 
+# Запуск бота
 if __name__ == '__main__':
     init_db()
-    executor.start_polling(dp, skip_updates=True)
-
-
-
-
+    executor.start_polling(dp, skip_updates=True, reset_webhook=True)
